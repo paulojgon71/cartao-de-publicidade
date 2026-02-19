@@ -1,57 +1,69 @@
 import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin
 import google.generativeai as genai
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import landscape
 from reportlab.lib.units import mm
 import io
+from PIL import Image
 
-def extrair_dados_site(url):
+def buscar_logo_por_dominio(url):
+    """Tenta obter o logo automaticamente via Clearbit API."""
     try:
-        if not url.startswith("http"): url = "https://" + url
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(url, headers=headers, timeout=5)
-        soup = BeautifulSoup(res.text, 'html.parser')
+        # Limpa o URL para extrair apenas o domínio (ex: roady.pt)
+        dominio = url.replace("https://", "").replace("http://", "").split("/")[0]
+        if dominio.startswith("www."):
+            dominio = dominio[4:]
+            
+        logo_url = f"https://logo.clearbit.com/{dominio}"
+        response = requests.get(logo_url, timeout=5)
         
-        logo_url = None
-        meta_logo = soup.find("meta", property="og:image")
-        if meta_logo:
-            logo_url = meta_logo["content"]
-        else:
-            for img in soup.find_all("img"):
-                if "logo" in img.get("src", "").lower():
-                    logo_url = urljoin(url, img.get("src"))
-                    break
-        
-        nome_empresa = url.split(".")[1].capitalize() if "." in url else "Empresa"
-        return nome_empresa, logo_url
+        if response.status_code == 200:
+            return Image.open(io.BytesIO(response.content))
+        return None
     except:
-        return "Empresa", None
+        return None
 
 def gerar_texto_gemini(api_key, nome, setor):
+    """Usa o Gemini para criar o slogan."""
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = f"Cria um slogan publicitário curto para a empresa {nome} do setor {setor}. Máximo 12 palavras."
+        prompt = f"Cria um slogan publicitário curto para a empresa {nome} do setor {setor}. Máximo 10 palavras."
         response = model.generate_content(prompt)
         return response.text.strip()
     except:
         return "Excelência e Confiança em cada detalhe."
 
-def gerar_pdf(nome, slogan, cor):
+def gerar_pdf(nome, slogan, cor, telefone, morada, logo_pil=None):
+    """Monta o PDF final com os dados e o logo."""
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=landscape((85*mm, 55*mm)))
-    c.setStrokeColor(cor)
-    c.rect(1*mm, 1*mm, 83*mm, 53*mm)
+    
+    # Design
     c.setFillColor(cor)
-    c.rect(1*mm, 40*mm, 83*mm, 14*mm, fill=1)
+    c.rect(0, 40*mm, 85*mm, 15*mm, fill=1, stroke=0)
+    
     c.setFillColor("#FFFFFF")
     c.setFont("Helvetica-Bold", 14)
     c.drawString(5*mm, 46*mm, nome.upper())
+    
+    if logo_pil:
+        img_buffer = io.BytesIO()
+        logo_pil.save(img_buffer, format='PNG')
+        img_buffer.seek(0)
+        c.drawImage(io.BytesIO(img_buffer.read()), 62*mm, 42*mm, width=16*mm, preserveAspectRatio=True, mask='auto')
+
     c.setFillColor("#333333")
-    c.setFont("Helvetica", 10)
-    c.drawString(5*mm, 30*mm, slogan)
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(5*mm, 30*mm, slogan[:55])
+    
+    c.setFillColor(cor)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(5*mm, 12*mm, f"TEL: {telefone}")
+    c.setFillColor("#666666")
+    c.setFont("Helvetica", 8)
+    c.drawString(5*mm, 7*mm, f"LOC: {morada}")
+    
     c.showPage()
     c.save()
     buffer.seek(0)
